@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fantasy Football Free Agency Tool</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #f8f9fa; }
+        .container { max-width: 900px; margin: 40px auto; background: #fff; padding: 32px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .hidden { display: none; }
+        button, select, input[type="number"] { margin: 8px 0; padding: 8px 16px; font-size: 1rem; border-radius: 4px; border: 1px solid #ccc; }
+        table { width: 100%; border-collapse: collapse; margin-top: 24px; }
+        th, td { padding: 8px 12px; border: 1px solid #ddd; text-align: left; }
+        th { background: #f1f1f1; cursor: pointer; }
+        tr:nth-child(even) { background: #f9f9f9; }
+        .controls { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; }
+    </style>
+</head>
+<body>
+    <div class="container" id="home">
+        <div id="homepage-content"></div>
+        <button id="to-app">Go to Webapp</button>
+    </div>
+    <div class="container hidden" id="app">
+        <h2>Fantasy Football Player Stats</h2>
+        <div class="controls">
+            <label for="position-filter">Position:</label>
+            <select id="position-filter">
+                <option value="">All</option>
+            </select>
+            <label for="rank-filter">Top X by Position Rank:</label>
+            <input type="number" id="rank-filter" min="1" value="10" style="width:80px;">
+        </div>
+        <div style="overflow-x:auto;">
+            <table id="stats-table">
+                <thead></thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <button id="back-home">Back to Home</button>
+    </div>
+    <script>
+    // Homepage.md content
+    const homepageMd = `# home page\n## Overview\nI created a tool to help fantasy football players find people to pick up in free agency throughout the season.  By filtering out the top players that are likely on teams already, and sorting by average production over the last three weeks, you can find players that have recently had an uptick in scoring and are likely to do better than their overall ranking would suggest.\n## Web Scraping\n\n### Data Sources\n\nThis project uses two fantasy football data sources, scraped using Python:\n\n- **Pro-Football-Reference**  \n  Used to collect player names and positions for the 2025 fantasy season.\n\n- **FootballDB**  \n  Used to collect weekly fantasy points (Weeks 1–13) for offensive players.\n\nFootballDB did not have the player positions in their table, so I used Pro-football-reference to collect those.\n\n---\n\n### Tools Used\n\nThe following Python libraries were used for web scraping and data processing:\n\n- \`urllib.request\` – to send HTTP requests  \n- \`BeautifulSoup\` (from \`bs4\`) – to parse HTML and extract table data  \n- \`pandas\` – to clean, merge, and export the data to CSV  \n\n---\n\n### Example Scraping Code (Request + Parse)\n\n\`\`\` python\nfrom urllib.request import urlopen, Request\nfrom bs4 import BeautifulSoup\n\nuser_agent = "Mozilla/5.0"\nheader = {"User-Agent": user_agent}\n\nurl = "https://www.footballdb.com/fantasy-football/index.html?yr=2025&pos=OFF&wk=13"\n\nreq = Request(url, headers=header)\nhtml_doc = urlopen(req).read().decode("UTF-8")\n\nsoup = BeautifulSoup(html_doc, "html.parser")\n\ntable = soup.find("tbody")\ntrlist = table.find_all("tr")\n\nfor tr in trlist:\n    tdlist = tr.find_all("td")\n    a = tr.find("a")\n\n    if a is None:\n        continue\n\n    name = a.text.strip()\n    points = float(tdlist[2].text.strip())\n    print(name, points)\n\n\`\`\`\n\n### AI Assistance Disclosure\n\nAn AI assistant was used to help:\n\nRestructure weekly scraping logic\n\nAdd total points calculations\n\nMerge position data with weekly data\n\nExport a clean final CSV file\n\nExample prompt used during development:\n\nWrite a Python function that uses requests and BeautifulSoup to scrape weekly fantasy football points from this FootballDB page. Store the data by player and week, then pivot it into a table with players as rows and weeks as columns. Add a total points column and export to a CSV file. Also merge player positions from Pro-Football-Reference.\n\nFor the whole AI conversation, click here: https://chatgpt.com/share/6931d54e-4bf0-8005-a30d-33f72470479e\n\n## Database\nFor my database, I collected the players names, positions, points for each week from 1-13, and their total points.\n\n### Format\n\nThe first column lists player names, the second is position, then the next thirteen columns are the weekly points, and finally the last column is total points.\n\n### SQL\n\nI initially had several different SQL queries I had to run in order to get my final csv file, but i was able to merge them all into this one query:\n\n\`\`\` sql\nSELECT \n    ranked.position_rank,\n    ranked.player_name,\n    ranked.position,\n    ranked.total_points,\n    ROUND((COALESCE(ranked.week_11, 0) + COALESCE(ranked.week_12, 0) + COALESCE(ranked.week_13, 0)) / 3.0, 2) as last_3_weeks_avg,\n    ranked.week_11,\n    ranked.week_12,\n    ranked.week_13\nFROM (\n    SELECT \n        ROW_NUMBER() OVER (PARTITION BY position ORDER BY total_points DESC) as position_rank,\n        player_name, \n        position, \n        total_points,\n        week_11,\n        week_12,\n        week_13\n    FROM player_stats\n) ranked\nORDER BY last_3_weeks_avg DESC;\n\n\`\`\`\n## Web Application\nAt the top of the application, there is a dropdown that allows you to filter by position. Next to it, there is an input box where you can enter a number and it will filter out any player whose position rank is above that number.  You can also sort by any of the columns in the table, ascending or descending, by clicking on the headers.  The main intended funcionality of the program is to find players that may not have a high ranking, but have been performing well recently.  While it is not perfect, the average points for the last three weeks can be used as an indicator for how a player may perform in the near future.  `;
+
+    // CSV data (first 120 lines for demo, can be extended)
+    let csvData = '';
+
+    // Markdown to HTML (simple)
+    function mdToHtml(md) {
+        // Remove the first '# home page' heading
+        md = md.replace(/^# home page\s*/i, '');
+        return md
+            .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+            .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+            .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+            .replace(/^---$/gim, '<hr>')
+            .replace(/^\- (.*$)/gim, '<li>$1</li>')
+            .replace(/\n\n/g, '<br>')
+            .replace(/\n/g, '<br>')
+            .replace(/`{3} ([^\n]+)\n([\s\S]*?)`{3}/g, '<pre><code>$2</code></pre>')
+            .replace(/`([^`]+)`/g, '<code>$1</code>');
+    }
+
+    // CSV to array of objects
+    function parseCSV(csv) {
+        const [header, ...rows] = csv.trim().split('\n');
+        const keys = header.split(',');
+        return rows.map(row => {
+            const values = row.split(',');
+            return keys.reduce((obj, key, i) => {
+                obj[key] = values[i] === 'NULL' ? null : values[i];
+                return obj;
+            }, {});
+        });
+    }
+
+    // Table rendering and filtering
+    let stats = [];
+    let sortCol = null, sortAsc = true;
+
+    function renderTable() {
+        const position = document.getElementById('position-filter').value;
+        const excludeTopX = parseInt(document.getElementById('rank-filter').value) || 0;
+        if (!stats || !stats.length) {
+            document.querySelector('#stats-table thead').innerHTML = '';
+            document.querySelector('#stats-table tbody').innerHTML = '<tr><td colspan="5">No data loaded.</td></tr>';
+            return;
+        }
+        let filtered = stats.filter(row => {
+            const rank = parseInt(row.position_rank);
+            return (!position || row.position === position) && (isNaN(rank) || rank > excludeTopX);
+        });
+        if (sortCol) {
+            filtered.sort((a, b) => {
+                let va = a[sortCol], vb = b[sortCol];
+                va = va === null ? -Infinity : isNaN(va) ? va : parseFloat(va);
+                vb = vb === null ? -Infinity : isNaN(vb) ? vb : parseFloat(vb);
+                if (va < vb) return sortAsc ? -1 : 1;
+                if (va > vb) return sortAsc ? 1 : -1;
+                return 0;
+            });
+        }
+        const thead = document.querySelector('#stats-table thead');
+        const tbody = document.querySelector('#stats-table tbody');
+        thead.innerHTML = '';
+        tbody.innerHTML = '';
+        // Table headers
+        const headers = Object.keys(stats[0]);
+        const tr = document.createElement('tr');
+        headers.forEach(h => {
+            const th = document.createElement('th');
+            th.textContent = h;
+            th.onclick = () => {
+                if (sortCol === h) sortAsc = !sortAsc;
+                else { sortCol = h; sortAsc = true; }
+                renderTable();
+            };
+            tr.appendChild(th);
+        });
+        thead.appendChild(tr);
+        // Table rows
+        if (filtered.length === 0) {
+            const tr = document.createElement('tr');
+            const td = document.createElement('td');
+            td.colSpan = headers.length;
+            td.textContent = 'No players match the filter.';
+            tr.appendChild(td);
+            tbody.appendChild(tr);
+        } else {
+            filtered.forEach(row => {
+                const tr = document.createElement('tr');
+                headers.forEach(h => {
+                    const td = document.createElement('td');
+                    td.textContent = row[h] ?? '';
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+        }
+    }
+
+    // Populate position dropdown
+    function populatePositions() {
+        const positions = Array.from(new Set(stats.map(r => r.position))).filter(Boolean);
+        const select = document.getElementById('position-filter');
+        positions.forEach(pos => {
+            const opt = document.createElement('option');
+            opt.value = pos;
+            opt.textContent = pos;
+            select.appendChild(opt);
+        });
+    }
+
+    // Initial homepage
+    document.getElementById('homepage-content').innerHTML = mdToHtml(homepageMd);
+    document.getElementById('to-app').onclick = () => {
+        document.getElementById('home').classList.add('hidden');
+        document.getElementById('app').classList.remove('hidden');
+        if (stats.length === 0) {
+            fetch('Final_stats.csv')
+                .then(response => {
+                    if (!response.ok) throw new Error('CSV not found');
+                    return response.text();
+                })
+                .then(text => {
+                    csvData = text;
+                    stats = parseCSV(csvData);
+                    populatePositions();
+                    renderTable();
+                })
+                .catch(err => {
+                    document.querySelector('#stats-table thead').innerHTML = '';
+                    document.querySelector('#stats-table tbody').innerHTML = `<tr><td colspan='5'>Error loading CSV: ${err.message}</td></tr>`;
+                });
+        } else {
+            renderTable();
+        }
+    };
+    document.getElementById('back-home').onclick = () => {
+        document.getElementById('app').classList.add('hidden');
+        document.getElementById('home').classList.remove('hidden');
+    };
+    document.getElementById('position-filter').onchange = renderTable;
+    document.getElementById('rank-filter').oninput = renderTable;
+    populatePositions();
+    </script>
+</body>
+</html>
